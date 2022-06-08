@@ -646,13 +646,13 @@ contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin {
 
     uint256 public MAX_QTY = 10000; // Maximum NFT minted
 
-    uint256 public price = 850 ether; // 0.01 ETH
+    uint256 public price = 850 ether;
 
     uint96 public royaltyPer = 1000; // Royalty Percentage
 
     bool public _saleStatus;
 
-    constructor() ERC721("Testing2","Test2"){}
+    constructor() ERC721("AstroSapiens","ASTRO"){}
 
     event Receive(address, uint);
 
