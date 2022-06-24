@@ -2,17 +2,16 @@
 
 pragma solidity ^0.8.7;
 
+import "@openzeppelin/contracts/token/ERC721/extensions/IERC721Enumerable.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/IERC721Metadata.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "@openzeppelin/contracts/token/common/ERC2981.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/Context.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
-import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
-import "@openzeppelin/contracts/token/ERC721/extensions/IERC721Metadata.sol";
-import "@openzeppelin/contracts/token/ERC721/extensions/IERC721Enumerable.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
 
 
 contract ERC721 is Context, ERC165, IERC721, IERC721Metadata {
@@ -26,7 +25,7 @@ contract ERC721 is Context, ERC165, IERC721, IERC721Metadata {
     string private _symbol;
 
     // Base URI
-    string private _baseURI;
+    string private _baseURIextended;
 
     // Mapping from token ID to owner address
     mapping(uint256 => address) internal _owners;
@@ -95,21 +94,25 @@ contract ERC721 is Context, ERC165, IERC721, IERC721Metadata {
     function tokenURI(uint256 tokenId) public view virtual override returns (string memory) {
         require(_exists(tokenId), "ERC721Metadata: URI query for nonexistent token");
 
-        string memory base = baseURI();
-        return bytes(base).length > 0 ? string(abi.encodePacked(base, tokenId.toString(),".json")) : "ipfs://QmNcwxnVMRZMGGbDqEM6KUZWGgMDWfJLeJbnQgPFNJ6Z7K";
+        string memory baseURI = _baseURI();
+        return bytes(baseURI).length > 0 ? string(abi.encodePacked(baseURI, tokenId.toString(),".json")) : "ipfs://QmNcwxnVMRZMGGbDqEM6KUZWGgMDWfJLeJbnQgPFNJ6Z7K";
     }
 
     /**
      * @dev Base URI for computing {tokenURI}. If set, the resulting URI for each
      * token will be the concatenation of the `baseURI` and the `tokenId`. Empty
-     * by default, can be overriden in child contracts.
+     * by default, can be overridden in child contracts.
      */
-    function baseURI() internal view virtual returns (string memory) {
-        return _baseURI;
+    function _baseURI() internal view virtual returns (string memory) {
+        return _baseURIextended;
     }
 
-    function _setBaseURI(string memory baseURI_) internal virtual {
-        _baseURI = baseURI_;
+    /**
+    * @dev Updating the Base URI from main contract. It will change the URI for
+    * each token. 
+    */
+    function setBaseURI(string memory baseURI_) internal virtual {
+        _baseURIextended = baseURI_;
     }
 
     /**
@@ -182,17 +185,17 @@ contract ERC721 is Context, ERC165, IERC721, IERC721Metadata {
         address from,
         address to,
         uint256 tokenId,
-        bytes memory _data
+        bytes memory data
     ) public virtual override {
         require(_isApprovedOrOwner(_msgSender(), tokenId), "ERC721: transfer caller is not owner nor approved");
-        _safeTransfer(from, to, tokenId, _data);
+        _safeTransfer(from, to, tokenId, data);
     }
 
     /**
      * @dev Safely transfers `tokenId` token from `from` to `to`, checking first that contract recipients
      * are aware of the ERC721 protocol to prevent tokens from being forever locked.
      *
-     * `_data` is additional data, it has no specified format and it is sent in call to `to`.
+     * `data` is additional data, it has no specified format and it is sent in call to `to`.
      *
      * This internal function is equivalent to {safeTransferFrom}, and can be used to e.g.
      * implement alternative mechanisms to perform token transfer, such as signature-based.
@@ -210,10 +213,10 @@ contract ERC721 is Context, ERC165, IERC721, IERC721Metadata {
         address from,
         address to,
         uint256 tokenId,
-        bytes memory _data
+        bytes memory data
     ) internal virtual {
         _transfer(from, to, tokenId);
-        require(_checkOnERC721Received(from, to, tokenId, _data), "ERC721: transfer to non ERC721Receiver implementer");
+        require(_checkOnERC721Received(from, to, tokenId, data), "ERC721: transfer to non ERC721Receiver implementer");
     }
 
     /**
@@ -238,7 +241,7 @@ contract ERC721 is Context, ERC165, IERC721, IERC721Metadata {
     function _isApprovedOrOwner(address spender, uint256 tokenId) internal view virtual returns (bool) {
         require(_exists(tokenId), "ERC721: operator query for nonexistent token");
         address owner = ERC721.ownerOf(tokenId);
-        return (spender == owner || getApproved(tokenId) == spender || isApprovedForAll(owner, spender));
+        return (spender == owner || isApprovedForAll(owner, spender) || getApproved(tokenId) == spender);
     }
 
     /**
@@ -262,11 +265,11 @@ contract ERC721 is Context, ERC165, IERC721, IERC721Metadata {
     function _safeMint(
         address to,
         uint256 tokenId,
-        bytes memory _data
+        bytes memory data
     ) internal virtual {
         _mint(to, tokenId);
         require(
-            _checkOnERC721Received(address(0), to, tokenId, _data),
+            _checkOnERC721Received(address(0), to, tokenId, data),
             "ERC721: transfer to non ERC721Receiver implementer"
         );
     }
@@ -359,7 +362,7 @@ contract ERC721 is Context, ERC165, IERC721, IERC721Metadata {
     /**
      * @dev Approve `to` to operate on `tokenId`
      *
-     * Emits a {Approval} event.
+     * Emits an {Approval} event.
      */
     function _approve(address to, uint256 tokenId) internal virtual {
         _tokenApprovals[tokenId] = to;
@@ -369,7 +372,7 @@ contract ERC721 is Context, ERC165, IERC721, IERC721Metadata {
     /**
      * @dev Approve `operator` to operate on all of `owner` tokens
      *
-     * Emits a {ApprovalForAll} event.
+     * Emits an {ApprovalForAll} event.
      */
     function _setApprovalForAll(
         address owner,
@@ -388,17 +391,17 @@ contract ERC721 is Context, ERC165, IERC721, IERC721Metadata {
      * @param from address representing the previous owner of the given token ID
      * @param to target address that will receive the tokens
      * @param tokenId uint256 ID of the token to be transferred
-     * @param _data bytes optional data to send along with the call
+     * @param data bytes optional data to send along with the call
      * @return bool whether the call correctly returned the expected magic value
      */
     function _checkOnERC721Received(
         address from,
         address to,
         uint256 tokenId,
-        bytes memory _data
+        bytes memory data
     ) private returns (bool) {
         if (to.isContract()) {
-            try IERC721Receiver(to).onERC721Received(_msgSender(), from, tokenId, _data) returns (bytes4 retval) {
+            try IERC721Receiver(to).onERC721Received(_msgSender(), from, tokenId, data) returns (bytes4 retval) {
                 return retval == IERC721Receiver.onERC721Received.selector;
             } catch (bytes memory reason) {
                 if (reason.length == 0) {
@@ -621,7 +624,11 @@ abstract contract ERC721Royalty is ERC2981, ERC721Enumerable {
 }
 
 abstract contract ContextMixin {
-    function msgSender() internal view returns (address payable sender) {
+    function msgSender()
+        internal
+        view
+        returns (address payable sender)
+    {
         if (msg.sender == address(this)) {
             bytes memory array = msg.data;
             uint256 index = msg.data.length;
@@ -643,16 +650,34 @@ contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin {
 
     using SafeMath for uint256;
     using Strings for uint256;
+    using Counters for Counters.Counter;
 
-    uint256 public MAX_QTY = 10000; // Maximum NFT minted
+    Counters.Counter private _tokenIds;
 
-    uint256 public price = 850 ether;
+    uint256 public MAX_QTY = 10500; // Maximum NFT minted
+
+    uint256 public MAX_VIP_Allow_List = 10000; // Maximum NFT minted
+
+    uint256 public price = 1 ether; // NFT PRICE
 
     uint96 public royaltyPer = 1000; // Royalty Percentage
 
-    bool public _saleStatus;
+    bool public _saleStatus; // Show Current Sale status VIP
 
-    constructor() ERC721("AstroSapiens","ASTRO"){}
+    bool public _saleStatus2; // Show Current Sale status VIP
+
+    bool public _saleStatus3; // Show Current Sale status Allow
+
+    // To increment the vip and allow list
+    uint256 public totalMintedNumber = 0;
+
+    mapping(address=>uint) public isVIPlist; // USER VIP LIST WALLET ADDRESS
+
+    mapping(address=>uint) public isVIPlist2; // USER SECOND VIP LIST WALLET ADDRESS
+
+    mapping(address=>uint) public isAllowlist; // USER Allow LIST WALLET ADDRESS
+
+    constructor() ERC721("AstroSapiens","ASTRO") {}
 
     event Receive(address, uint);
 
@@ -662,6 +687,16 @@ contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin {
 
     modifier saleFlip() {
         require(_saleStatus);
+        _;
+    }
+
+    modifier saleFlip2() {
+        require(_saleStatus2);
+        _;
+    }
+
+    modifier saleFlip3() {
+        require(_saleStatus3);
         _;
     }
 
@@ -692,25 +727,19 @@ contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin {
         _afterTokenTransfer(from, to, tokenId);
     }
 
-    /*
-    ** @dev mintNFT - Per Wallet max 5 NFT can minted
-    ** @dev royalty - Percentage set as per tokenID and wallet address
-    */
-    function mintNFT(uint numberOfTokens) public payable saleFlip {
-        require(numberOfTokens > 0, "Zero is not allowed!");
-        require(totalSupply().add(numberOfTokens) <= MAX_QTY, "Purchase would exceed max supply of NFTs");
-        require(price.mul(numberOfTokens) <= msg.value, "Ether value sent is not correct");
-        require(balanceOf(msg.sender).add(numberOfTokens) <= 5,"Per User 5 NFT is allowed");
-        for(uint i = 0; i < numberOfTokens; i++) {
-            uint mintIndex = totalSupply();
-            _safeMint(msg.sender, mintIndex+1);
-            _setTokenRoyalty(mintIndex+1, msg.sender, royaltyPer);
-        }
+    //  @dev Start/Stop VIP list sale
+    function VIPSaleAction() external onlyOwner {
+        _saleStatus = !_saleStatus;
     }
 
-    //  @dev Start/Stop sale
-    function SaleAction() external onlyOwner {
-        _saleStatus = !_saleStatus;
+    //  @dev Start/Stop VIP2 list sale
+    function VIPSale2Action() external onlyOwner {
+        _saleStatus2 = !_saleStatus2;
+    }
+    
+    //  @dev Start/Stop Allow list sale
+    function AllowSaleAction() external onlyOwner {
+        _saleStatus3 = !_saleStatus3;
     }
 
     // @dev Change mint NFT price in wei 
@@ -725,21 +754,102 @@ contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin {
     }
 
     // @dev Update baseURI
-     function setBaseURI(string memory baseURI) public onlyOwner {
-        _setBaseURI(baseURI);
+     function _setBaseURI(string memory baseURI) public onlyOwner {
+        setBaseURI(baseURI);
+    }
+
+    function isApprovedForAll(address _owner, address _operator) public override view returns (bool isOperator) {
+      // if OpenSea's ERC721 Proxy Address is detected, auto-return true
+      // for Polygon's Mumbai testnet, use 0xff7Ca10aF37178BdD056628eF42fD7F799fAc77c
+      // for Polygon Mainnet, use 0x58807baD0B376efc12F5AD86aAc70E78ed67deaE
+        if (_operator == address(0xff7Ca10aF37178BdD056628eF42fD7F799fAc77c)) {
+            return true;
+        }
+        
+        // otherwise, use the default ERC721.isApprovedForAll()
+        return ERC721.isApprovedForAll(_owner, _operator);
     }
 
     function _msgSender() internal override view returns (address sender) {
         return ContextMixin.msgSender();
     }
 
-    function isApprovedForAll(address _owner, address _operator) public override view returns (bool isOperator) {
-      // if OpenSea's ERC721 Proxy Address is detected, auto-return true
-        if (_operator == address(0x58807baD0B376efc12F5AD86aAc70E78ed67deaE)) {
-            return true;
+    // @dev Add wallet address of VIPList
+    function addVIPList(address[] memory _users) public onlyOwner {
+        for (uint i = 0; i < _users.length; i++) {
+            isVIPlist[_users[i]] = 0;
         }
-        
-        // otherwise, use the default ERC721.isApprovedForAll()
-        return ERC721.isApprovedForAll(_owner, _operator);
+    }
+
+    // @dev Add wallet address of VIPList2
+    function addVIPList2(address[] memory _users) public onlyOwner {
+        for (uint i = 0; i < _users.length; i++) {
+            isVIPlist2[_users[i]] = 0;
+        }
+    }
+
+    // @dev Add wallet address of AllowList
+    function addAllowList(address[] memory _users) public onlyOwner {
+        for (uint i = 0; i < _users.length; i++) {
+            isAllowlist[_users[i]] = 0;
+        }
+    }
+
+    // @dev Only wallet addres added in addVIPList added able to mint
+    function VIPList(uint256 numberOfTokens) public saleFlip payable {
+        require(numberOfTokens > 0,"Zero is not allowed");
+        require(totalMintedNumber.add(numberOfTokens) <= MAX_VIP_Allow_List, "Max limit of NFTs");
+        require(msg.value >= price.mul(numberOfTokens), "Ether value sent is not correct");
+        require(isVIPlist[msg.sender].add(numberOfTokens) <= 2, "User exceed Max limit");
+        for(uint i = 0; i < numberOfTokens; i++) {
+            uint256 newItemId = _tokenIds.current();
+            _safeMint(msg.sender, newItemId+1);
+            _setTokenRoyalty(newItemId+1, msg.sender, royaltyPer);
+            _tokenIds.increment();
+        }
+        isVIPlist[msg.sender] += numberOfTokens;
+        totalMintedNumber += numberOfTokens;
+    }
+
+    // @dev Only wallet addres added in addVIPList added able to mint
+    function VIPList2(uint256 numberOfTokens) public saleFlip2 payable {
+        require(numberOfTokens > 0,"Zero is not allowed");
+        require(totalMintedNumber.add(numberOfTokens) <= MAX_VIP_Allow_List, "Max limit of NFTs");
+        require(msg.value >= price.mul(numberOfTokens), "Ether value sent is not correct");
+        require(isVIPlist2[msg.sender].add(numberOfTokens) <= 2, "User exceed Max limit");
+        for(uint i = 0; i < numberOfTokens; i++) {
+            uint256 newItemId = _tokenIds.current();
+            _safeMint(msg.sender, newItemId+1);
+            _setTokenRoyalty(newItemId+1, msg.sender, royaltyPer);
+            _tokenIds.increment();
+        }
+        isVIPlist2[msg.sender] += numberOfTokens;
+        totalMintedNumber += numberOfTokens;
+    }
+
+
+    // @dev Only wallet addres added in addAllowList added able to mint
+    function AllowList(uint256 numberOfTokens) public saleFlip3 payable {
+        require(numberOfTokens > 0,"Zero is not allowed");
+        require(totalMintedNumber.add(numberOfTokens) <= MAX_VIP_Allow_List, "Max limit of NFTs");
+        require(msg.value >= price.mul(numberOfTokens), "Ether value sent is not correct");
+        require(isAllowlist[msg.sender].add(numberOfTokens) <= 5, "User exceed Max limit");
+        for(uint i = 0; i < numberOfTokens; i++) {
+            uint256 newItemId = _tokenIds.current();
+            _safeMint(msg.sender, newItemId+1);
+            _setTokenRoyalty(newItemId+1, msg.sender, royaltyPer);
+            _tokenIds.increment();
+        }
+        isAllowlist[msg.sender] += numberOfTokens;
+        totalMintedNumber += numberOfTokens;
+    }
+    // @dev Owner has reserve few new
+    function GiftList(uint256 _startingNumber, uint256 _endNumber) public onlyOwner {
+        require(_startingNumber > 10000, "Lower Number should be more than 10000");
+        require(_endNumber <= 10500, "Lower Number should be more than 10000");
+        for(uint256 i = _startingNumber; i <= _endNumber; i++) {
+            _safeMint(msg.sender, i);
+            _setTokenRoyalty(i, msg.sender, royaltyPer);
+        }
     }
 }
