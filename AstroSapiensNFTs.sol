@@ -5,6 +5,8 @@ pragma solidity ^0.8.7;
 import "@openzeppelin/contracts/token/ERC721/extensions/IERC721Enumerable.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/IERC721Metadata.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/common/ERC2981.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
@@ -646,11 +648,29 @@ abstract contract ContextMixin {
     }
 }
 
-contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin {
+
+interface IAstroSapiens_NFT {
+
+    function withdraw() external;
+
+    function AllowSaleAction() external;
+
+    function VIPSaleAction() external;
+
+    function VIPSale2Action() external;
+
+    function GiftList(uint256 _start, uint256 end) external;
+
+    function OnwershipChange(address _newOnwer) external;
+}
+
+contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin, ReentrancyGuard, AccessControl {
 
     using SafeMath for uint256;
     using Strings for uint256;
     using Counters for Counters.Counter;
+
+    address MultiSigWallet;
 
     Counters.Counter private _tokenIds;
 
@@ -677,8 +697,27 @@ contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin {
 
     mapping(address=>uint) public isAllowlist; // USER Allow LIST WALLET ADDRESS
 
-    constructor() ERC721("AstroSapiens","ASTRO") {}
+    bytes32 public constant URI_SETTER_ROLE = keccak256("URI_SETTER_ROLE");
+    bytes32 public constant ADDING_LIST_ROLE = keccak256("DEVELOPER_ROLE");
+    bytes32 public constant FEE_CHANGER_ROLE = keccak256("FEE_CHANGER_ROLE");
 
+    constructor() ERC721("AstroSapiens","ASTRO") {
+        _grantRole(URI_SETTER_ROLE, msg.sender);
+        _grantRole(ADDING_LIST_ROLE, msg.sender);
+        _grantRole(FEE_CHANGER_ROLE, msg.sender);
+    }
+
+    event Gifted(address indexed sender, uint256 nftStart, uint256 nftEnd);
+    event AllowedMint(address indexed sender, uint256 count, uint256 charge);
+    event VIPMint(address indexed sender, uint256 count, uint256 charge);
+    event VIP2Mint(address indexed sender, uint256 count, uint256 charge);
+    event WithdrawFee(address indexed sender, uint256 amount);
+    event AllowSaleMode(address indexed sender, bool status);
+    event VIPSaleMode(address indexed sender, bool status);
+    event VIP2SaleMode(address indexed sender, bool status);
+    event NewPrice(address indexed sender, uint256 amount);
+    event NewRoyalty(address indexed sender, uint256 NewPercentage);
+    event NewBaseURI(address indexed sender, string NewURI);
     event Receive(address, uint);
 
     receive() external payable {
@@ -686,24 +725,30 @@ contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin {
     }
 
     modifier saleFlip() {
-        require(_saleStatus);
+        require(_saleStatus, "VIP list Sale has not been started");
         _;
     }
 
     modifier saleFlip2() {
-        require(_saleStatus2);
+        require(_saleStatus2, "VIP list2 Sale has not been started");
         _;
     }
 
     modifier saleFlip3() {
-        require(_saleStatus3);
+        require(_saleStatus3, "Allow list Sale has not been started");
         _;
     }
 
     // @dev Withdraw in wei by owner of the Contract
-    function withdraw() public onlyOwner {
+    function withdraw() external {
+        require(msg.sender == MultiSigWallet, "Calller is not the Owner");
         uint256 balance = address(this).balance;
-        payable(msg.sender).transfer(balance);
+        payable(owner()).transfer(balance);
+        emit WithdrawFee(msg.sender, balance);
+    }
+
+    function AddMultiWallet(address _multiSign) public onlyRole(FEE_CHANGER_ROLE) {
+        MultiSigWallet = _multiSign;
     }
 
     // @dev override ERC721 transfer function for implementing EIP2981 Royalty
@@ -727,35 +772,48 @@ contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin {
         _afterTokenTransfer(from, to, tokenId);
     }
 
+    function supportsInterface(bytes4 interfaceId) public view virtual override(ERC721Royalty, AccessControl) returns (bool) {
+        return interfaceId == type(IAccessControl).interfaceId || super.supportsInterface(interfaceId);
+    }
+
     //  @dev Start/Stop VIP list sale
-    function VIPSaleAction() external onlyOwner {
+    function VIPSaleAction() external {
+        require(msg.sender == MultiSigWallet, "Caller is not the Owner");
         _saleStatus = !_saleStatus;
+        emit VIPSaleMode(msg.sender, _saleStatus);
     }
 
     //  @dev Start/Stop VIP2 list sale
-    function VIPSale2Action() external onlyOwner {
+    function VIPSale2Action() external {
+        require(msg.sender == MultiSigWallet, "Caller is not the Owner");
         _saleStatus2 = !_saleStatus2;
+        emit VIP2SaleMode(msg.sender, _saleStatus);
     }
     
     //  @dev Start/Stop Allow list sale
-    function AllowSaleAction() external onlyOwner {
+    function AllowSaleAction() external {
+        require(msg.sender == MultiSigWallet, "Caller is not the Owner");
         _saleStatus3 = !_saleStatus3;
+        emit AllowSaleMode(msg.sender, _saleStatus);
     }
 
     // @dev Change mint NFT price in wei 
-    function priceChange(uint256 _price) public onlyOwner {
+    function priceChange(uint256 _price) public onlyRole(FEE_CHANGER_ROLE) {
         price = _price;
+        emit NewPrice(msg.sender, price);
     }
 
     // @dev Change Royalty Percentage
-    function setRoyaltyPer(uint96 _royaltyPer) public onlyOwner {
+    function setRoyaltyPer(uint96 _royaltyPer) public onlyRole(FEE_CHANGER_ROLE) {
         require(_royaltyPer <= _feeDenominator(), "ERC2981: royalty fee will exceed salePrice");
         royaltyPer = _royaltyPer;
+        emit NewRoyalty(msg.sender, royaltyPer);
     }
 
     // @dev Update baseURI
-     function _setBaseURI(string memory baseURI) public onlyOwner {
+     function _setBaseURI(string memory baseURI) public onlyRole(URI_SETTER_ROLE) {
         setBaseURI(baseURI);
+        emit NewBaseURI(msg.sender, baseURI);
     }
 
     function isApprovedForAll(address _owner, address _operator) public override view returns (bool isOperator) {
@@ -775,44 +833,44 @@ contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin {
     }
 
     // @dev Add wallet address of VIPList
-    function addVIPList(address[] memory _users) public onlyOwner {
+    function addVIPList(address[] memory _users) public onlyRole(ADDING_LIST_ROLE) nonReentrant {
         for (uint i = 0; i < _users.length; i++) {
             isVIPlist[_users[i]] = 0;
         }
     }
 
     // @dev Add wallet address of VIPList2
-    function addVIPList2(address[] memory _users) public onlyOwner {
+    function addVIPList2(address[] memory _users) public onlyRole(ADDING_LIST_ROLE) nonReentrant {
         for (uint i = 0; i < _users.length; i++) {
             isVIPlist2[_users[i]] = 0;
         }
     }
 
     // @dev Add wallet address of AllowList
-    function addAllowList(address[] memory _users) public onlyOwner {
+    function addAllowList(address[] memory _users) public onlyRole(ADDING_LIST_ROLE) nonReentrant {
         for (uint i = 0; i < _users.length; i++) {
             isAllowlist[_users[i]] = 0;
         }
     }
 
     // @dev Only wallet addres added in addVIPList added able to mint
-    function VIPList(uint256 numberOfTokens) public saleFlip payable {
-        require(numberOfTokens > 0,"Zero is not allowed");
-        require(totalMintedNumber.add(numberOfTokens) <= MAX_VIP_Allow_List, "Max limit of NFTs");
-        require(msg.value >= price.mul(numberOfTokens), "Ether value sent is not correct");
-        require(isVIPlist[msg.sender].add(numberOfTokens) <= 2, "User exceed Max limit");
-        for(uint i = 0; i < numberOfTokens; i++) {
+    function VIPList() public saleFlip nonReentrant payable {
+        require(totalMintedNumber.add(2) <= MAX_VIP_Allow_List, "Max limit of NFTs");
+        require(msg.value >= price.mul(2), "Ether value sent is not correct");
+        require(isVIPlist[msg.sender].add(2) <= 2, "User exceed Max limit");
+        for(uint i = 0; i < 2; i++) {
             uint256 newItemId = _tokenIds.current();
             _safeMint(msg.sender, newItemId+1);
             _setTokenRoyalty(newItemId+1, msg.sender, royaltyPer);
             _tokenIds.increment();
         }
-        isVIPlist[msg.sender] += numberOfTokens;
-        totalMintedNumber += numberOfTokens;
+        isVIPlist[msg.sender] += 2;
+        totalMintedNumber += 2;
+        emit VIPMint(msg.sender, 2, msg.value);
     }
 
     // @dev Only wallet addres added in addVIPList added able to mint
-    function VIPList2(uint256 numberOfTokens) public saleFlip2 payable {
+    function VIPList2(uint256 numberOfTokens) public saleFlip2 nonReentrant payable {
         require(numberOfTokens > 0,"Zero is not allowed");
         require(totalMintedNumber.add(numberOfTokens) <= MAX_VIP_Allow_List, "Max limit of NFTs");
         require(msg.value >= price.mul(numberOfTokens), "Ether value sent is not correct");
@@ -825,11 +883,12 @@ contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin {
         }
         isVIPlist2[msg.sender] += numberOfTokens;
         totalMintedNumber += numberOfTokens;
+        emit VIP2Mint(msg.sender, numberOfTokens, msg.value);
     }
 
 
     // @dev Only wallet addres added in addAllowList added able to mint
-    function AllowList(uint256 numberOfTokens) public saleFlip3 payable {
+    function AllowList(uint256 numberOfTokens) public saleFlip3 nonReentrant payable {
         require(numberOfTokens > 0,"Zero is not allowed");
         require(totalMintedNumber.add(numberOfTokens) <= MAX_VIP_Allow_List, "Max limit of NFTs");
         require(msg.value >= price.mul(numberOfTokens), "Ether value sent is not correct");
@@ -842,14 +901,21 @@ contract AstroSapiens_NFT is ERC721Royalty, Ownable, ContextMixin {
         }
         isAllowlist[msg.sender] += numberOfTokens;
         totalMintedNumber += numberOfTokens;
+        emit AllowedMint(msg.sender, numberOfTokens, msg.value);
     }
+
     // @dev Owner has reserve few new
-    function GiftList(uint256 _startingNumber, uint256 _endNumber) public onlyOwner {
+    function GiftList(uint256 _startingNumber, uint256 _endNumber) external onlyOwner nonReentrant {
         require(_startingNumber > 10000, "Lower Number should be more than 10000");
         require(_endNumber <= 10500, "Lower Number should be more than 10000");
         for(uint256 i = _startingNumber; i <= _endNumber; i++) {
             _safeMint(msg.sender, i);
             _setTokenRoyalty(i, msg.sender, royaltyPer);
         }
+        emit Gifted(msg.sender, _startingNumber, _endNumber);
+    }
+
+    function OnwershipChange(address _newOnwer) external onlyOwner nonReentrant {
+        transferOwnership(_newOnwer);
     }
 }
